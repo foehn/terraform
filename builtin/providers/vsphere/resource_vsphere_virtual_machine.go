@@ -516,6 +516,15 @@ func resourceVSphereVirtualMachineRead(d *schema.ResourceData, meta interface{})
 	d.Set("cpu", mvm.Summary.Config.NumCpu)
 	d.Set("datastore", rootDatastore)
 
+	if len(networkInterfaces) > 0 {
+		d.SetConnInfo(map[string]string{
+			"type": "ssh",
+			"host": networkInterfaces[0]["ipv4_address"].(string),
+		})
+
+		log.Printf("[DEBUG] set ConnInfo type ssh and ip='%s'",
+			networkInterfaces[0]["ipv4_address"].(string))
+	}
 	return nil
 }
 
