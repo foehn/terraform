@@ -87,6 +87,12 @@ func resourceVSphereVirtualMachine() *schema.Resource {
 				ForceNew: true,
 			},
 
+			"uuid": &schema.Schema{
+				Type:     schema.TypeString,
+				Optional: true,
+				ForceNew: true,
+			},
+
 			"folder": &schema.Schema{
 				Type:     schema.TypeString,
 				Optional: true,
@@ -504,6 +510,7 @@ func resourceVSphereVirtualMachineRead(d *schema.ResourceData, meta interface{})
 		break
 	}
 
+	d.Set("uuid", mvm.Summary.Config.Uuid)
 	d.Set("datacenter", dc)
 	d.Set("memory", mvm.Summary.Config.MemorySizeMB)
 	d.Set("cpu", mvm.Summary.Config.NumCpu)

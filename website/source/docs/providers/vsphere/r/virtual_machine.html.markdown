@@ -74,6 +74,7 @@ The `disk` block supports:
 The following attributes are exported:
 
 * `id` - The instance ID.
+* `uuid` - The instance uuid from vsphere.
 * `name` - See Argument Reference above.
 * `vcpu` - See Argument Reference above.
 * `memory` - See Argument Reference above.
