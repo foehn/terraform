@@ -38,8 +38,9 @@ type networkInterface struct {
 }
 
 type hardDisk struct {
-	size int64
-	iops int64
+	size     int64
+	iops     int64
+	diskType string
 }
 
 type virtualMachine struct {
@@ -247,6 +248,13 @@ func resourceVSphereVirtualMachine() *schema.Resource {
 							ForceNew: true,
 						},
 
+						"disk_type": &schema.Schema{
+							Type:     schema.TypeString,
+							Optional: true,
+							ForceNew: true,
+							Default:  "eager_zeroed",
+						},
+
 						"size": &schema.Schema{
 							Type:     schema.TypeInt,
 							Optional: true,
@@ -371,6 +379,9 @@ func resourceVSphereVirtualMachineCreate(d *schema.ResourceData, meta interface{
 			if i == 0 {
 				if v, ok := disk["template"].(string); ok && v != "" {
 					vm.template = v
+					if v, ok := disk["size"].(int); ok && v != 0 {
+						disks[i].size = int64(v)
+					}
 				} else {
 					if v, ok := disk["size"].(int); ok && v != 0 {
 						disks[i].size = int64(v)
@@ -390,6 +401,10 @@ func resourceVSphereVirtualMachineCreate(d *schema.ResourceData, meta interface{
 			}
 			if v, ok := disk["iops"].(int); ok && v != 0 {
 				disks[i].iops = int64(v)
+			}
+
+			if v, ok := disk["disk_type"].(string); ok && v != "" {
+				disks[i].diskType = v
 			}
 		}
 		vm.hardDisks = disks
@@ -1136,7 +1151,6 @@ func (vm *virtualMachine) deployVirtualMachine(c *govmomi.Client) error {
 		networkConfigs = append(networkConfigs, config)
 	}
 	log.Printf("[DEBUG] network configs: %v", networkConfigs[0].Adapter)
-
 	// make config spec
 	configSpec := types.VirtualMachineConfigSpec{
 		NumCPUs:           vm.vcpu,
@@ -1242,7 +1256,7 @@ func (vm *virtualMachine) deployVirtualMachine(c *govmomi.Client) error {
 	log.Printf("[DEBUG]VM customization finished")
 
 	for i := 1; i < len(vm.hardDisks); i++ {
-		err = addHardDisk(newVM, vm.hardDisks[i].size, vm.hardDisks[i].iops, "eager_zeroed")
+		err = addHardDisk(newVM, vm.hardDisks[i].size, vm.hardDisks[i].iops, vm.hardDisks[i].diskType)
 		if err != nil {
 			return err
 		}
