@@ -381,6 +381,9 @@ func resourceVSphereVirtualMachineCreate(d *schema.ResourceData, meta interface{
 			if i == 0 {
 				if v, ok := disk["template"].(string); ok && v != "" {
 					vm.template = v
+					if v, ok := disk["size"].(int); ok && v != 0 {
+						disks[i].size = int64(v)
+					}
 				} else {
 					if v, ok := disk["size"].(int); ok && v != 0 {
 						disks[i].size = int64(v)
@@ -533,11 +536,21 @@ func resourceVSphereVirtualMachineRead(d *schema.ResourceData, meta interface{})
 		break
 	}
 
+	d.Set("uuid", mvm.Summary.Config.Uuid)
 	d.Set("datacenter", dc)
 	d.Set("memory", mvm.Summary.Config.MemorySizeMB)
 	d.Set("cpu", mvm.Summary.Config.NumCpu)
 	d.Set("datastore", rootDatastore)
 
+	if len(networkInterfaces) > 0 {
+		d.SetConnInfo(map[string]string{
+			"type": "ssh",
+			"host": networkInterfaces[0]["ipv4_address"].(string),
+		})
+
+		log.Printf("[DEBUG] set ConnInfo type ssh and ip='%s'",
+			networkInterfaces[0]["ipv4_address"].(string))
+	}
 	return nil
 }
 
@@ -615,51 +628,61 @@ func waitForNetworkingActive(client *govmomi.Client, datacenter, name string) re
 }
 
 // addHardDisk adds a new Hard Disk to the VirtualMachine.
-func addHardDisk(vm *object.VirtualMachine, size, iops int64, diskType string) error {
-	devices, err := vm.Device(context.TODO())
-	if err != nil {
-		return err
-	}
-	log.Printf("[DEBUG] vm devices: %#v\n", devices)
+// func addHardDisk(vm *object.VirtualMachine, c *govmomi.Client, size, iops int64, diskType string) error {
+// 	devices, err := vm.Device(context.TODO())
+// 	if err != nil {
+// 		return err
+// 	}
+// 	log.Printf("[DEBUG] vm devices: %#v\n", devices)
 
-	controller, err := devices.FindDiskController("scsi")
-	if err != nil {
-		return err
-	}
-	log.Printf("[DEBUG] disk controller: %#v\n", controller)
+// 	controller, err := devices.FindDiskController("scsi")
+// 	if err != nil {
+// 		return err
+// 	}
+// 	log.Printf("[DEBUG] disk controller: %#v\n", controller)
 
-	disk := devices.CreateDisk(controller, "")
-	existing := devices.SelectByBackingInfo(disk.Backing)
-	log.Printf("[DEBUG] disk: %#v\n", disk)
+// 	dcFolders, err := dc.Folders(context.TODO())
+// 	if err != nil {
+// 		return err
+// 	}
 
-	if len(existing) == 0 {
-		disk.CapacityInKB = int64(size * 1024 * 1024)
-		if iops != 0 {
-			disk.StorageIOAllocation = &types.StorageIOAllocationInfo{
-				Limit: iops,
-			}
-		}
-		backing := disk.Backing.(*types.VirtualDiskFlatVer2BackingInfo)
+// 	d, err := getDatastoreObject(c, dcFolders, vm.datastore)
 
-		if diskType == "eager_zeroed" {
-			// eager zeroed thick virtual disk
-			backing.ThinProvisioned = types.NewBool(false)
-			backing.EagerlyScrub = types.NewBool(true)
-		} else if diskType == "thin" {
-			// thin provisioned virtual disk
-			backing.ThinProvisioned = types.NewBool(true)
-		}
+// 	if err != nil {
+// 		return err
+// 	}
+// 	disk := devices.CreateDisk(controller, d, "")
+// 	existing := devices.SelectByBackingInfo(disk.Backing)
+// 	log.Printf("[DEBUG] disk: %#v\n", disk)
 
-		log.Printf("[DEBUG] addHardDisk: %#v\n", disk)
-		log.Printf("[DEBUG] addHardDisk: %#v\n", disk.CapacityInKB)
+// 	if len(existing) == 0 {
+// 		disk.CapacityInKB = int64(size * 1024 * 1024)
+// 		if iops != 0 {
+// 			disk.StorageIOAllocation = &types.StorageIOAllocationInfo{
+// 				Limit: iops,
+// 			}
+// 		}
+// 		backing := disk.Backing.(*types.VirtualDiskFlatVer2BackingInfo)
 
-		return vm.AddDevice(context.TODO(), disk)
-	} else {
-		log.Printf("[DEBUG] addHardDisk: Disk already present.\n")
+// 		if diskType == "eager_zeroed" {
+// 			// eager zeroed thick virtual disk
+// 			backing.ThinProvisioned = types.NewBool(false)
+// 			backing.EagerlyScrub = types.NewBool(true)
+// 		} else if diskType == "thin" {
+// 			// thin provisioned virtual disk
+// 			backing.ThinProvisioned = types.NewBool(true)
+// 		}
 
-		return nil
-	}
-}
+// 		log.Printf("[DEBUG] addHardDisk: %#v\n", disk)
+// 		log.Printf("[DEBUG] addHardDisk: %#v\n", disk.CapacityInKB)
+
+// 		return vm.AddDevice(context.TODO(), disk)
+// 	} else {
+// 		log.Printf("[DEBUG] addHardDisk: Disk already present.\n")
+
+// 		return nil
+// 	}
+// }
 
 // buildNetworkDevice builds VirtualDeviceConfigSpec for Network Device.
 func buildNetworkDevice(f *find.Finder, label, adapterType string) (*types.VirtualDeviceConfigSpec, error) {
@@ -708,7 +731,7 @@ func buildNetworkDevice(f *find.Finder, label, adapterType string) (*types.Virtu
 
 // buildVMRelocateSpec builds VirtualMachineRelocateSpec to set a place for a new VirtualMachine.
 func buildVMRelocateSpec(rp *object.ResourcePool, ds *object.Datastore, vm *object.VirtualMachine, initType string) (types.VirtualMachineRelocateSpec, error) {
-	var key int
+	var key int32
 
 	devices, err := vm.Device(context.TODO())
 	if err != nil {
@@ -793,7 +816,7 @@ func buildStoragePlacementSpecClone(c *govmomi.Client, f *object.DatacenterFolde
 		return types.StoragePlacementSpec{}
 	}
 
-	var key int
+	var key int32
 	for _, d := range devices.SelectByType((*types.VirtualDisk)(nil)) {
 		key = d.GetVirtualDevice().Key
 		log.Printf("[DEBUG] findDatastore: virtual devices: %#v\n", d.GetVirtualDevice())
@@ -910,7 +933,7 @@ func (vm *virtualMachine) createVirtualMachine(c *govmomi.Client) error {
 	configSpec := types.VirtualMachineConfigSpec{
 		GuestId:           "otherLinux64Guest",
 		Name:              vm.name,
-		NumCPUs:           vm.vcpu,
+		NumCPUs:           int32(vm.vcpu),
 		NumCoresPerSocket: 1,
 		MemoryMB:          vm.memoryMb,
 		DeviceChange:      networkDevices,
@@ -1003,7 +1026,7 @@ func (vm *virtualMachine) createVirtualMachine(c *govmomi.Client) error {
 	for _, hd := range vm.hardDisks {
 		log.Printf("[DEBUG] add hard disk: %v", hd.size)
 		log.Printf("[DEBUG] add hard disk: %v", hd.iops)
-		err = addHardDisk(newVM, hd.size, hd.iops, "thin")
+		// err = addHardDisk(newVM, c, hd.size, hd.iops, "thin")
 		if err != nil {
 			return err
 		}
@@ -1153,14 +1176,32 @@ func (vm *virtualMachine) deployVirtualMachine(c *govmomi.Client) error {
 	}
 	log.Printf("[DEBUG] network configs: %v", networkConfigs[0].Adapter)
 
-	// make config spec
+	devices, err := template.Device(context.TODO())
+	if err != nil {
+		return err
+	}
+
+	devices = devices.SelectByType((*types.VirtualDisk)(nil))
+	var res []types.BaseVirtualDeviceConfigSpec
+	for i, device := range devices {
+		if vm.hardDisks[i].size > 0 {
+			disk := device.(*types.VirtualDisk)
+			disk.CapacityInKB = int64(vm.hardDisks[i].size * 1024 * 1024)
+			config := &types.VirtualDeviceConfigSpec{
+				Device:    disk,
+				Operation: types.VirtualDeviceConfigSpecOperationEdit,
+			}
+			res = append(res, config)
+		}
+	}
+
 	configSpec := types.VirtualMachineConfigSpec{
-		NumCPUs:           vm.vcpu,
+		NumCPUs:           int32(vm.vcpu),
 		NumCoresPerSocket: 1,
 		MemoryMB:          vm.memoryMb,
+		DeviceChange:      res,
 	}
 	log.Printf("[DEBUG] virtual machine config spec: %v", configSpec)
-
 	log.Printf("[DEBUG] starting extra custom config spec: %v", vm.customConfigurations)
 
 	// make ExtraConfig
@@ -1222,7 +1263,7 @@ func (vm *virtualMachine) deployVirtualMachine(c *govmomi.Client) error {
 	}
 	log.Printf("[DEBUG] new vm: %v", newVM)
 
-	devices, err := newVM.Device(context.TODO())
+	devices, err = newVM.Device(context.TODO())
 	if err != nil {
 		log.Printf("[DEBUG] Template devices can't be found")
 		return err
@@ -1231,7 +1272,7 @@ func (vm *virtualMachine) deployVirtualMachine(c *govmomi.Client) error {
 	for _, dvc := range devices {
 		// Issue 3559/3560: Delete all ethernet devices to add the correct ones later
 		if devices.Type(dvc) == "ethernet" {
-			err := newVM.RemoveDevice(context.TODO(), dvc)
+			err := newVM.RemoveDevice(context.TODO(), false, dvc)
 			if err != nil {
 				return err
 			}
@@ -1257,12 +1298,12 @@ func (vm *virtualMachine) deployVirtualMachine(c *govmomi.Client) error {
 	}
 	log.Printf("[DEBUG]VM customization finished")
 
-	for i := 1; i < len(vm.hardDisks); i++ {
-		err = addHardDisk(newVM, vm.hardDisks[i].size, vm.hardDisks[i].iops, vm.hardDisks[i].initType)
-		if err != nil {
-			return err
-		}
-	}
+	// for i := 1; i < len(vm.hardDisks); i++ {
+	// 	err = addHardDisk(newVM, c, vm.hardDisks[i].size, vm.hardDisks[i].iops, vm.hardDisks[i].initType, datastore)
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// }
 	log.Printf("[DEBUG] virtual machine config spec: %v", configSpec)
 
 	newVM.PowerOn(context.TODO())
