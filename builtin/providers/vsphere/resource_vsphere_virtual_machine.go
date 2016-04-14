@@ -87,7 +87,11 @@ func resourceVSphereVirtualMachine() *schema.Resource {
 				Required: true,
 				ForceNew: true,
 			},
-
+			"uuid": &schema.Schema{
+				Type:     schema.TypeString,
+				Optional: true,
+				ForceNew: true,
+			},
 			"folder": &schema.Schema{
 				Type:     schema.TypeString,
 				Optional: true,
