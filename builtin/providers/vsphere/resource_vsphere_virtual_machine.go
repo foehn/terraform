@@ -218,6 +218,10 @@ func resourceVSphereVirtualMachine() *schema.Resource {
 				Default:  false,
 			},
 
+			"uuid": &schema.Schema{
+				Type:     schema.TypeString,
+				Computed: true,
+			},
 			"custom_configuration_parameters": &schema.Schema{
 				Type:     schema.TypeMap,
 				Optional: true,
@@ -801,15 +805,15 @@ func resourceVSphereVirtualMachineCreate(d *schema.ResourceData, meta interface{
 				}
 
 				if v, ok := disk["size"].(int); ok && v != 0 {
-					if v, ok := disk["template"].(string); ok && v != "" {
-						return fmt.Errorf("Cannot specify size of a template")
-					}
+					// if v, ok := disk["template"].(string); ok && v != "" {
+					// 	return fmt.Errorf("Cannot specify size of a template")
+					// }
 
-					if v, ok := disk["name"].(string); ok && v != "" {
-						newDisk.name = v
-					} else {
-						return fmt.Errorf("[ERROR] Disk name must be provided when creating a new disk")
-					}
+					// if v, ok := disk["name"].(string); ok && v != "" {
+					// 	newDisk.name = v
+					// } else {
+					// 	return fmt.Errorf("[ERROR] Disk name must be provided when creating a new disk")
+					// }
 
 					newDisk.size = int64(v)
 				}
@@ -1071,6 +1075,7 @@ func resourceVSphereVirtualMachineRead(d *schema.ResourceData, meta interface{})
 	d.Set("memory_reservation", mvm.Summary.Config.MemoryReservation)
 	d.Set("cpu", mvm.Summary.Config.NumCpu)
 	d.Set("datastore", rootDatastore)
+	d.Set("uuid", mvm.Summary.Config.Uuid)
 
 	return nil
 }
@@ -1711,6 +1716,25 @@ func (vm *virtualMachine) setupVirtualMachine(c *govmomi.Client) error {
 			return err
 		}
 
+		devices, err := template.Device(context.TODO())
+		if err != nil {
+			return err
+		}
+
+		devices = devices.SelectByType((*types.VirtualDisk)(nil))
+		var res []types.BaseVirtualDeviceConfigSpec
+		for i, device := range devices {
+			if vm.hardDisks[i].size > 0 {
+				disk := device.(*types.VirtualDisk)
+				disk.CapacityInKB = int64(vm.hardDisks[i].size * 1024 * 1024)
+				config := &types.VirtualDeviceConfigSpec{
+					Device:    disk,
+					Operation: types.VirtualDeviceConfigSpecOperationEdit,
+				}
+				res = append(res, config)
+			}
+		}
+		configSpec.DeviceChange = res
 		log.Printf("[DEBUG] relocate spec: %v", relocateSpec)
 
 		// make vm clone spec

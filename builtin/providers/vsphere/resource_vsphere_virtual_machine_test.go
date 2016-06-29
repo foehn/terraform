@@ -236,6 +236,8 @@ func (test TestFuncData) testCheckFuncBasic() (
 	}
 	return testAccCheckVSphereVirtualMachineExists(vmName, &test.vm),
 		resource.TestCheckResourceAttr(vmName, "name", res),
+		resource.TestCheckResourceAttr(vmName, "uuid", res),
+		resource.TestMatchResourceAttr(vmName, "uuid", regexp.MustCompile("[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}")),
 		resource.TestCheckResourceAttr(vmName, "vcpu", cpu),
 		resource.TestCheckResourceAttr(vmName, "memory", mem),
 		resource.TestCheckResourceAttr(vmName, "disk.#", disks),
